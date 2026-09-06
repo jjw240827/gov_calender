@@ -1,375 +1,332 @@
-import React, { useState, useMemo } from 'react';
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  Heart, 
-  Search, 
-  MapPin, 
-  DollarSign, 
-  Wallet, 
-  GraduationCap, 
-  Home, 
-  Info, 
-  User,
-  Calendar as CalendarIcon,
-  Bell,
-  Sparkles
+import { useMemo, useState } from 'react';
+import {
+  ChevronLeft, ChevronRight, Heart, Search, MapPin, DollarSign, Wallet,
+  GraduationCap, Home, Info, User, Calendar as CalendarIcon, Bell, Sparkles,
+  List as ListIcon, LayoutGrid, CheckCircle2, HelpCircle, XCircle,
 } from 'lucide-react';
 import './App.css';
+import { useStore, CATEGORY_LABELS, CATEGORY_THEME } from './data/store.jsx';
+import { useAnnouncements, normalizeProfile } from './hooks/useAnnouncements.js';
+import { matchAnnouncement, applyStatus } from '../server/lib/match.js';
+import FilterBar from './components/FilterBar.jsx';
+import AnnouncementList from './components/AnnouncementList.jsx';
+import ProfileModal from './components/ProfileModal.jsx';
 
-// 💡 4가지 데이터 세팅 (슬롯 번호 포함)
-const MOCK_EVENTS = [
-  {
-    id: 'youth_income',
-    shortTitle: '청년기본소득 3분기',
-    fullTitle: '2026년 3분기 경기도 청년기본소득 신청',
-    startDate: '2026-09-01',
-    endDate: '2026-10-02',
-    category: 'gyeonggi',
-    badge: '경기도',
-    slot: 0,
-    targetInfo: {
-      age: '만 24세 청년 (2001.07.02 ~ 2002.07.01 출생)',
-      income: '소득 무관 (소득·재산 심사 없음)',
-      asset: '조건 없음',
-      residence: '경기도 3년 이상 연속 또는 합산 10년 이상 거주'
-    },
-    method: '잡아바 어플라이(apply.jobaba.net) 온라인/모바일 접수',
-    desc: '분기별 25만 원 (연 최대 100만 원) 지역화폐 지급',
-    location: '주민등록 관할 시·군청'
-  },
-  {
-    id: 'national_scholarship',
-    shortTitle: '국가장학금 2차',
-    fullTitle: '2026학년도 2학기 국가장학금 2차 신청',
-    startDate: '2026-08-12',
-    endDate: '2026-09-09',
-    category: 'gov',
-    badge: '정부',
-    slot: 1,
-    targetInfo: {
-      age: '대학 신입생·편입생·복학생·재학생',
-      income: '학자금 지원구간 8구간 이하',
-      asset: '가구원 소득 및 재산 조사',
-      residence: '전국 공통'
-    },
-    method: '한국장학재단 홈페이지 및 앱 신청',
-    desc: '등록금 필수 경비 전액 또는 구간별 차등 지원',
-    location: '한국장학재단'
-  },
-  {
-    id: 'hwaseong_loan',
-    shortTitle: '다자녀 대출이자',
-    fullTitle: '화성시 다자녀가구 주택자금 대출이자 지원사업',
-    startDate: '2026-08-18',
-    endDate: '2026-09-11',
-    category: 'hwaseong',
-    badge: '화성시',
-    slot: 2,
-    targetInfo: {
-      age: '제한 없음 (다자녀 가구)',
-      income: '기준 중위소득 180% 이하',
-      asset: '무주택 세대구성원',
-      residence: '부모·자녀 모두 화성시 주민등록 거주'
-    },
-    method: '주소지 읍·면·동 행정복지센터 방문 신청',
-    desc: '주택 대출 잔액의 1.5% 내 최대 150만 원 지원',
-    location: '관할 읍면동 행정복지센터'
-  },
-  {
-    id: 'geoje_fund',
-    shortTitle: '거제·통영 특별모금',
-    fullTitle: '화성시 거제·통영 호우피해 지원 특별모금',
-    startDate: '2026-08-18',
-    endDate: '2026-09-15',
-    category: 'hwaseong',
-    badge: '화성시',
-    slot: 3,
-    targetInfo: {
-      age: '전 국민 누구나 참여 가능',
-      income: '제한 없음',
-      asset: '제한 없음',
-      residence: '제한 없음'
-    },
-    method: '농협 301-0190-2998-71 (사회복지공동모금회)',
-    desc: '호우 피해 지역 이재민 구호 특별 모금',
-    location: '화성시복지재단'
-  }
-];
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+const formatDate = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const TODAY = formatDate(new Date());
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('calendar');
-  const [searchKeyword, setSearchKeyword] = useState('');
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 8, 1)); // 2026년 9월
-  const [selectedEvent, setSelectedEvent] = useState(null);
+  const { state, dispatch } = useStore();
+  const { status, source, lastCrawlAt, list, monthEvents, overflow, laneCount } = useAnnouncements();
+  const [showProfile, setShowProfile] = useState(false);
 
-  const prevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
-  const nextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  const selected = useMemo(
+    () => list.find((a) => a.id === state.selectedId) || state.announcements.find((a) => a.id === state.selectedId),
+    [list, state.announcements, state.selectedId],
+  );
 
-  const formatDate = (date) => {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  };
+  if (state.view === 'detail' && selected) {
+    return <DetailPage announcement={selected} onBack={() => dispatch({ type: 'SELECT', id: null })} />;
+  }
 
-  // 💡 달력 그리드용 5주 날짜 계산 (구글 캘린더 방식)
+  return (
+    <div className="container calendar-page">
+      <header className="cal-hero-header">
+        <div className="cal-nav-bar">
+          <div className="cal-logo-group">
+            <div className="cal-logo-icon"><CalendarIcon size={24} color="#ffffff" /></div>
+            <div>
+              <div className="service-tag"><Sparkles size={12} /> 화성시 맞춤 혜택</div>
+              <h1 className="hero-title">공공 서비스 캘린더</h1>
+            </div>
+          </div>
+          <div className="user-action-group">
+            <button className="icon-badge-btn" title="알림"><Bell size={20} /><span className="dot-badge" /></button>
+            <button className="user-profile-pill" onClick={() => setShowProfile(true)}>
+              <User size={18} />
+              <span>{state.profile ? '내 조건 수정' : '내 조건 설정'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="cal-search-container">
+          <div className="cal-search-box">
+            <Search size={20} className="search-icon" />
+            <input
+              type="text"
+              placeholder="지원금 명칭 · 담당부서 · 키워드를 입력하세요 (예: 청년 이사비)"
+              value={state.filters.keyword}
+              onChange={(e) => dispatch({ type: 'SET_FILTER', patch: { keyword: e.target.value } })}
+              autoComplete="off" spellCheck="false"
+            />
+            {state.filters.keyword && (
+              <button className="btn-search-action" onClick={() => dispatch({ type: 'SET_FILTER', patch: { keyword: '' } })}>
+                초기화
+              </button>
+            )}
+          </div>
+
+          <div className="quick-tags">
+            <span className="tag-label">빠른 검색 :</span>
+            {['청년', '이사비', '임산부', '소상공인', '장학'].map((kw) => (
+              <button key={kw}
+                className={`tag-chip ${state.filters.keyword === kw ? 'active' : ''}`}
+                onClick={() => dispatch({ type: 'SET_FILTER', patch: { keyword: state.filters.keyword === kw ? '' : kw } })}>
+                #{kw}
+              </button>
+            ))}
+          </div>
+        </div>
+      </header>
+
+      <FilterBar onOpenProfile={() => setShowProfile(true)} resultCount={list.length} />
+
+      <div className="view-toggle">
+        <button className={state.view === 'calendar' ? 'active' : ''} onClick={() => dispatch({ type: 'SET_VIEW', view: 'calendar' })}>
+          <LayoutGrid size={16} /> 달력
+        </button>
+        <button className={state.view === 'list' ? 'active' : ''} onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>
+          <ListIcon size={16} /> 리스트
+        </button>
+        <span className="data-note">
+          {status === 'loading' ? '불러오는 중…'
+            : `${source === 'api' ? '실시간' : '저장된'} 데이터 · 최근 수집 ${fmtWhen(lastCrawlAt)}`}
+        </span>
+      </div>
+
+      {state.view === 'calendar'
+        ? <CalendarView monthEvents={monthEvents} overflow={overflow} laneCount={laneCount}
+            month={state.currentMonth} dispatch={dispatch} />
+        : <AnnouncementList items={list} />}
+
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+    </div>
+  );
+}
+
+function CalendarView({ monthEvents, overflow, laneCount, month, dispatch }) {
   const weeks = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-
-    const firstDayOfMonth = new Date(year, month, 1);
-    const startDayOfWeek = firstDayOfMonth.getDay();
-    
-    const startDate = new Date(year, month, 1 - startDayOfWeek);
-    const resultWeeks = [];
-    let currentCursor = new Date(startDate);
-
-    for (let w = 0; w < 5; w++) {
+    const year = month.getFullYear();
+    const m = month.getMonth();
+    const startDayOfWeek = new Date(year, m, 1).getDay();
+    const cursor = new Date(year, m, 1 - startDayOfWeek);
+    const out = [];
+    for (let w = 0; w < 6; w++) {
       const week = [];
       for (let d = 0; d < 7; d++) {
-        const dateStr = formatDate(currentCursor);
+        const dateStr = formatDate(cursor);
         week.push({
-          dateStr,
-          dayNum: currentCursor.getDate(),
-          isCurrentMonth: currentCursor.getMonth() === month,
-          isToday: dateStr === '2026-09-02',
-          dayOfWeek: d
+          dateStr, dayNum: cursor.getDate(),
+          isCurrentMonth: cursor.getMonth() === m,
+          isToday: dateStr === TODAY,
+          dayOfWeek: d,
         });
-        currentCursor.setDate(currentCursor.getDate() + 1);
+        cursor.setDate(cursor.getDate() + 1);
       }
-      resultWeeks.push(week);
+      out.push(week);
+      if (cursor.getMonth() !== m && w >= 4) break;
     }
-    return resultWeeks;
-  }, [currentDate]);
+    return out;
+  }, [month]);
 
-  const handleEventClick = (event) => {
-    setSelectedEvent(event);
-    setCurrentPage('detail');
-  };
+  const prev = () => dispatch({ type: 'SET_MONTH', date: new Date(month.getFullYear(), month.getMonth() - 1, 1) });
+  const next = () => dispatch({ type: 'SET_MONTH', date: new Date(month.getFullYear(), month.getMonth() + 1, 1) });
 
-  // ================= 1. 달력 페이지 화면 =================
-  if (currentPage === 'calendar') {
-    return (
-      <div className="container calendar-page">
-        {/* 상단 통합 헤더 배너 (고객님 원본 100% 유지) */}
-        <header className="cal-hero-header">
-          <div className="cal-nav-bar">
-            <div className="cal-logo-group">
-              <div className="cal-logo-icon">
-                <CalendarIcon size={24} color="#ffffff" />
-              </div>
-              <div>
-                <div className="service-tag"><Sparkles size={12} /> 정부·지자체 맞춤 복지</div>
-                <h1 className="hero-title">공공 서비스 캘린더</h1>
-              </div>
-            </div>
-            <div className="user-action-group">
-              <button className="icon-badge-btn" title="알림">
-                <Bell size={20} />
-                <span className="dot-badge"></span>
-              </button>
-              <div className="user-profile-pill">
-                <User size={18} />
-                <span>내 지원금 관리</span>
-              </div>
-            </div>
-          </div>
+  return (
+    <div className="cal-card">
+      <div className="cal-month-nav">
+        <button className="icon-btn" onClick={prev}><ChevronLeft size={22} /></button>
+        <h2>{month.getFullYear()}년 {month.getMonth() + 1}월</h2>
+        <button className="icon-btn" onClick={next}><ChevronRight size={22} /></button>
+      </div>
 
-          {/* 중앙 검색창 & 추천 검색어 (고객님 원본 100% 유지) */}
-          <div className="cal-search-container">
-            <div className="cal-search-box">
-              <Search size={20} className="search-icon" />
-              <input 
-                type="text" 
-                placeholder="지역명(예: 화성시 동탄) 또는 지원금 명칭을 입력하세요" 
-                value={searchKeyword}
-                onChange={(e) => setSearchKeyword(e.target.value)}
-                autoComplete="off"
-                spellCheck="false"
-              />
-              <button className="btn-search-action">조회</button>
-            </div>
+      <div className="cal-grid-new">
+        {WEEKDAYS.map((w, i) => (
+          <div key={w} className={`cal-day-name ${i === 0 ? 'text-red' : i === 6 ? 'text-blue' : ''}`}>{w}</div>
+        ))}
 
-            <div className="quick-tags">
-              <span className="tag-label">인기 키워드 :</span>
-              <button className="tag-chip active">#청년기본소득</button>
-              <button className="tag-chip">#국가장학금</button>
-              <button className="tag-chip">#다자녀지원</button>
-              <button className="tag-chip">#동탄/화성시</button>
-            </div>
-          </div>
-        </header>
-
-        {/* 캘린더 메인 카드 (고객님 뼈대 유지 + 내부 그리드만 변경) */}
-        <div className="cal-card">
-          <div className="cal-month-nav">
-            <button className="icon-btn" onClick={prevMonth}><ChevronLeft size={22} /></button>
-            <h2>{currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월</h2>
-            <button className="icon-btn" onClick={nextMonth}><ChevronRight size={22} /></button>
-          </div>
-
-          <div className="cal-grid-new">
-            {/* 요일 헤더 */}
-            <div className="cal-day-name text-red">일</div>
-            <div className="cal-day-name">월</div>
-            <div className="cal-day-name">화</div>
-            <div className="cal-day-name">수</div>
-            <div className="cal-day-name">목</div>
-            <div className="cal-day-name">금</div>
-            <div className="cal-day-name text-blue">토</div>
-
-            {/* ✨ 주 단위 루프 및 연속 바 렌더링 */}
-            <div className="cal-weeks-body">
-              {weeks.map((week, wIdx) => (
-                <div key={wIdx} className="cal-week-row">
-                  {week.map((day, dIdx) => (
-                    <div key={dIdx} className={`cal-cell-new ${!day.isCurrentMonth ? 'empty' : ''} ${day.isToday ? 'today' : ''}`}>
-                      <div className="day-num-label">{day.dayNum}</div>
-                      
-                      <div className="bar-slot-container">
-                        {[0, 1, 2, 3].map(slotIndex => {
-                          const event = MOCK_EVENTS.find(e => e.slot === slotIndex);
-                          if (!event) return <div key={slotIndex} className="bar-spacer" />;
-
-                          const isInside = day.dateStr >= event.startDate && day.dateStr <= event.endDate;
-                          if (!isInside) return <div key={slotIndex} className="bar-spacer" />;
-
-                          const isStart = day.dateStr === event.startDate || day.dayOfWeek === 0;
-                          const isEnd = day.dateStr === event.endDate || day.dayOfWeek === 6;
-
-                          return (
-                            <div
-                              key={slotIndex}
-                              className={`bar-item theme-${event.category} ${isStart ? 'is-start' : ''} ${isEnd ? 'is-end' : ''}`}
-                              onClick={() => handleEventClick(event)}
-                            >
-                              {isStart && <span className="bar-text">{event.shortTitle}</span>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
+        <div className="cal-weeks-body">
+          {weeks.map((week, wIdx) => (
+            <div key={wIdx} className="cal-week-row">
+              {week.map((day, dIdx) => (
+                <div key={dIdx} className={`cal-cell-new ${!day.isCurrentMonth ? 'empty' : ''} ${day.isToday ? 'today' : ''}`}>
+                  <div className="day-num-label">{day.dayNum}</div>
+                  <div className="bar-slot-container">
+                    {Array.from({ length: laneCount }, (_, lane) => {
+                      const ev = monthEvents.find(
+                        (e) => e.lane === lane && day.dateStr >= e._start && day.dateStr <= e._end,
+                      );
+                      if (!ev) return <div key={lane} className="bar-spacer" />;
+                      const isStart = day.dateStr === ev._start || day.dayOfWeek === 0;
+                      const isEnd = day.dateStr === ev._end || day.dayOfWeek === 6;
+                      const eligCls = ev.match ? ` elig-${ev.match.eligible}` : '';
+                      return (
+                        <div key={lane}
+                          className={`bar-item theme-${CATEGORY_THEME[ev.category]} ${isStart ? 'is-start' : ''} ${isEnd ? 'is-end' : ''}${eligCls}`}
+                          onClick={() => dispatch({ type: 'SELECT', id: ev.id })}
+                          title={ev.title}>
+                          {isStart && <span className="bar-text">{ev.title}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
+          ))}
         </div>
       </div>
-    );
-  }
 
-  // ================= 2. 상세 화면 (고객님 원본 UI 100% 유지 + 데이터 매핑) =================
+      {overflow.length > 0 && (
+        <div className="cal-overflow">
+          이번 달 표시되지 않은 공고 {overflow.length}건 —{' '}
+          <button onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>리스트에서 보기</button>
+        </div>
+      )}
+      {monthEvents.length === 0 && overflow.length === 0 && (
+        <div className="cal-overflow">이 달에 해당하는 공고가 없습니다.</div>
+      )}
+    </div>
+  );
+}
+
+const ELIG_ICON = {
+  yes: <CheckCircle2 size={16} className="text-green" />,
+  maybe: <HelpCircle size={16} className="text-yellow" />,
+  no: <XCircle size={16} className="text-pink" />,
+};
+
+function DetailPage({ announcement: a, onBack }) {
+  const { state } = useStore();
+  const c = a.criteria || {};
+  const profile = state.profile ? normalizeProfile(state.profile) : null;
+  const match = profile ? matchAnnouncement(a, profile) : null;
+  const st = applyStatus(a);
+  const statusLabel = { open: '신청중', upcoming: '접수 예정', closed: '접수 마감', always: '상시 접수' }[st];
+
   return (
     <div className="container">
       <header className="header">
         <div className="header-top">
-          <button className="icon-btn" onClick={() => setCurrentPage('calendar')}>
-            <ChevronLeft size={28} />
-          </button>
+          <button className="icon-btn" onClick={onBack}><ChevronLeft size={28} /></button>
           <div className="title-area">
-            <h1>{selectedEvent.fullTitle}</h1>
-            <span className="badge">{selectedEvent.badge} 지원사업</span>
+            <h1>{a.title}</h1>
+            <span className="badge">{CATEGORY_LABELS[a.category]} · {a.source === 'hscity' ? '화성시' : a.source}</span>
           </div>
           <div className="date-area">
-            <span>신청기간: {selectedEvent.startDate} ~ {selectedEvent.endDate}</span>
+            <span>{statusLabel} · {a.applyStart || a.postedDate} ~ {a.applyEnd || '별도 공지'}{a.applyEndApprox ? ' (추정)' : ''}</span>
           </div>
         </div>
-        
+
         <div className="header-bottom">
-          <button className="btn-primary">온라인 신청하기 (바로가기)</button>
+          <a className="btn-primary" href={a.url} target="_blank" rel="noreferrer">원문 공고 보기 (화성시청)</a>
           <button className="btn-outline"><Heart size={18} /> 관심</button>
         </div>
       </header>
 
-      <main className="content-grid">
-        {/* 왼쪽: 자격요건 */}
-        <section className="card">
-          <div className="card-header">
-            <Info className="icon-blue" />
-            <h2>{selectedEvent.shortTitle} 자격요건</h2>
+      {match && (
+        <div className={`match-banner mb-${match.eligible}`}>
+          {ELIG_ICON[match.eligible]}
+          <strong>
+            {match.eligible === 'yes' ? '입력하신 조건에 부합합니다'
+              : match.eligible === 'maybe' ? '일부 조건은 원문 확인이 필요합니다'
+              : '입력하신 조건과 맞지 않는 항목이 있습니다'}
+          </strong>
+          <div className="match-reasons">
+            {match.reasons.map((r, i) => (
+              <span key={i} className={`mr r-${r.status}`}>{r.text}</span>
+            ))}
           </div>
-          
+        </div>
+      )}
+
+      <main className="content-grid">
+        <section className="card">
+          <div className="card-header"><Info className="icon-blue" /><h2>자격 요건</h2></div>
+
           <div className="age-timeline">
-            <p className="timeline-title">지원 대상 연령 : <strong>{selectedEvent.targetInfo.age}</strong></p>
-            <div className="timeline-bar"></div>
+            <p className="timeline-title">
+              지원 대상 연령 : <strong>{fmtAge(c)}</strong>
+            </p>
+            <div className="timeline-bar" />
           </div>
 
           <div className="req-grid">
-            <div className="req-item">
-              <DollarSign className="req-icon text-yellow" />
-              <div>
-                <h3>가구소득</h3>
-                <p>{selectedEvent.targetInfo.income}</p>
-              </div>
-            </div>
-            <div className="req-item">
-              <Wallet className="req-icon text-pink" />
-              <div>
-                <h3>자산/기타</h3>
-                <p>{selectedEvent.targetInfo.asset}</p>
-              </div>
-            </div>
-            <div className="req-item">
-              <Home className="req-icon text-green" />
-              <div>
-                <h3>거주 요건</h3>
-                <p>{selectedEvent.targetInfo.residence}</p>
-              </div>
-            </div>
-            <div className="req-item">
-              <GraduationCap className="req-icon text-blue" />
-              <div>
-                <h3>지원 내용</h3>
-                <p>{selectedEvent.desc}</p>
-              </div>
-            </div>
+            <ReqItem icon={<DollarSign className="req-icon text-yellow" />} title="소득 기준"
+              text={c.incomeMaxPct ? `기준 중위소득 ${c.incomeMaxPct}% 이하` : c.incomeNote || '원문 확인 필요'} />
+            <ReqItem icon={<Wallet className="req-icon text-pink" />} title="세대 특성"
+              text={c.householdFlags?.length ? c.householdFlags.join(', ') : '제한 없음 / 원문 확인'} />
+            <ReqItem icon={<Home className="req-icon text-green" />} title="거주 요건"
+              text={fmtResidence(c)} />
+            <ReqItem icon={<GraduationCap className="req-icon text-blue" />} title="직업 · 신분"
+              text={c.occupationFlags?.length ? c.occupationFlags.join(', ') : '제한 없음 / 원문 확인'} />
           </div>
+
+          <p className="extract-note">
+            ※ 자격 요건은 공고 본문에서 자동 추출한 값입니다(신뢰도 {Math.round((c.confidence || 0) * 100)}%).
+            정확한 기준은 반드시 원문·첨부파일을 확인하세요.
+          </p>
         </section>
 
-        {/* 오른쪽: 신청 방법 및 지도 */}
         <section className="card">
-          <div className="card-header">
-            <MapPin className="icon-green" />
-            <h2>신청 방법</h2>
-          </div>
+          <div className="card-header"><MapPin className="icon-green" /><h2>신청 정보</h2></div>
 
-          <div className="search-box">
-            <Search size={18} className="search-icon" />
-            <input type="text" defaultValue={selectedEvent.method} readOnly />
-            <button className="btn-search">확인</button>
-          </div>
-          
-          <p className="map-title">가장 가까운 접수처 찾기</p>
-          
-          <div className="map-container">
-            <iframe 
-              title="real-map"
-              src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3175.76!2d127.0694!3d37.2052!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x357b43a3b5a19c5b%3A0x6e9f5e135f55b9a4!2z64-Z7YOEMeqwgCDtlonsoJXrs7Xsp4DsEv7Yw!5e0!3m2!1sko!2skr!4v1700000000000!5m2!1sko!2skr" 
-              width="100%" 
-              height="100%" 
-              style={{ border: 0 }} 
-              allowFullScreen="" 
-              loading="lazy" 
-              referrerPolicy="no-referrer-when-downgrade">
-            </iframe>
-            
-            <div className="map-overlay">
-              <div className="map-popup">
-                <h4>{selectedEvent.location}</h4>
-                <p>관할 구역을 확인하세요</p>
-                <button className="btn-detail">상세보기</button>
-              </div>
-              <div className="map-marker">
-                <MapPin size={38} fill="#ef4444" color="white" strokeWidth={1.5} />
-              </div>
-            </div>
-          </div>
+          <dl className="info-dl">
+            <div><dt>담당 부서</dt><dd>{a.department || '—'}</dd></div>
+            <div><dt>문의</dt><dd>{a.contact || '—'}</dd></div>
+            <div><dt>공고 번호</dt><dd>{a.docNo || '—'}</dd></div>
+            <div><dt>게시일</dt><dd>{a.postedDate || '—'}</dd></div>
+          </dl>
+
+          {a.attachments?.length > 0 && (
+            <>
+              <p className="map-title" style={{ textAlign: 'left' }}>첨부파일</p>
+              <ul className="attach-list">
+                {a.attachments.map((f, i) => (
+                  <li key={i}><a href={f.url} target="_blank" rel="noreferrer">{f.name}</a></li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <p className="body-preview">{a.bodyText || '본문 미리보기가 없습니다.'}</p>
         </section>
       </main>
     </div>
   );
+}
+
+function ReqItem({ icon, title, text }) {
+  return (
+    <div className="req-item">
+      {icon}
+      <div><h3>{title}</h3><p>{text}</p></div>
+    </div>
+  );
+}
+
+function fmtAge(c) {
+  if (c.ageMin != null && c.ageMax != null) return `만 ${c.ageMin} ~ ${c.ageMax}세`;
+  if (c.ageMin != null) return `만 ${c.ageMin}세 이상`;
+  if (c.ageMax != null) return `만 ${c.ageMax}세 이하`;
+  if (c.birthYearFrom || c.birthYearTo) return `${c.birthYearFrom ?? ''} ~ ${c.birthYearTo ?? ''}년생`;
+  return '연령 제한 없음 / 원문 확인';
+}
+
+function fmtResidence(c) {
+  const map = { hwaseong: '화성시 거주', gyeonggi: '경기도 거주', none: '거주지 제한 없음 / 원문 확인' };
+  let base = map[c.residenceRequired] || (c.residenceRequired?.startsWith('hwaseong_')
+    ? `화성시 ${c.residenceRequired.slice(9)} 거주` : c.residenceRequired);
+  if (c.residenceYears) base += ` · ${c.residenceYears}년 이상`;
+  return base;
+}
+
+function fmtWhen(iso) {
+  if (!iso) return '정보 없음';
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 export default App;

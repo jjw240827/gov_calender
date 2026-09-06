@@ -7,9 +7,16 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "crawl": "node server/crawler/run.js",
+    "crawl:full": "node server/crawler/run.js --full --pages=40",
+    "reclassify": "node server/crawler/reclassify.js",
+    "export": "node server/export.js",
+    "api": "node server/api.js"
   },
   "dependencies": {
+    "cheerio": "^1.2.0",
+    "iconv-lite": "^0.7.3",
     "lucide-react": "^1.34.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
