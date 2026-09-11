@@ -1,7 +1,11 @@
 // 경량 조회 API — node:http (PROJECT_SPEC.md §3.5)
 //   npm run api            → http://localhost:5178
 // Vite dev 서버에서 /api 프록시로 연결 (vite.config.js 참조)
+// 배포 환경(dist/ 존재 시)에서는 이 서버가 빌드된 프론트도 같이 서빙한다.
 import { createServer } from 'node:http';
+import { readFileSync, existsSync } from 'node:fs';
+import { extname, join, resolve as resolvePath, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   listAnnouncements, getAnnouncement, getMeta,
   createUser, verifyUser, createSession, userForToken, deleteSession, updateUserProfile,
@@ -9,7 +13,29 @@ import {
 } from './db/index.js';
 import { searchAnnouncements } from './lib/match.js';
 
-const PORT = process.env.API_PORT || 5178;
+const PORT = process.env.PORT || process.env.API_PORT || 5178;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = resolvePath(__dirname, '../dist');
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2',
+};
+
+function serveStatic(res, pathname) {
+  let filePath = resolvePath(DIST_DIR, '.' + (pathname === '/' ? '/index.html' : pathname));
+  if (!filePath.startsWith(DIST_DIR) || !existsSync(filePath) || pathname.endsWith('/')) {
+    filePath = join(DIST_DIR, 'index.html'); // SPA 폴백
+  }
+  if (!existsSync(filePath)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('프론트 빌드가 없습니다. `npm run build` 먼저 실행하세요.');
+  }
+  res.writeHead(200, { 'Content-Type': MIME[extname(filePath)] || 'application/octet-stream' });
+  res.end(readFileSync(filePath));
+}
 
 // 크롤 결과는 자주 안 바뀌므로 프로세스 캐시(60초)
 let cache = { at: 0, rows: [] };
@@ -48,6 +74,10 @@ const server = createServer(async (req, res) => {
   const { pathname, searchParams } = url;
 
   if (req.method === 'OPTIONS') return json(res, 204, {});
+
+  if (req.method === 'GET' && !pathname.startsWith('/api/') && existsSync(DIST_DIR)) {
+    return serveStatic(res, pathname);
+  }
 
   try {
     if (pathname === '/api/meta') {
