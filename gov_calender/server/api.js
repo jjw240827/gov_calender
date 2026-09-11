@@ -37,11 +37,25 @@ function serveStatic(res, pathname) {
   res.end(readFileSync(filePath));
 }
 
+// 배포 환경은 디스크가 휘발성이라 DB가 비어있을 수 있음 — 그 경우 git에 커밋된
+// export 스냅샷(src/data/announcements.json)으로 대체한다.
+const STATIC_ANNOUNCEMENTS = resolvePath(__dirname, '../src/data/announcements.json');
+function loadStaticFallback() {
+  try {
+    const data = JSON.parse(readFileSync(STATIC_ANNOUNCEMENTS, 'utf8'));
+    return data.announcements || [];
+  } catch {
+    return [];
+  }
+}
+
 // 크롤 결과는 자주 안 바뀌므로 프로세스 캐시(60초)
 let cache = { at: 0, rows: [] };
 function allRows() {
   if (Date.now() - cache.at > 60_000) {
-    cache = { at: Date.now(), rows: listAnnouncements({ benefitOnly: false }) };
+    const dbRows = listAnnouncements({ benefitOnly: false });
+    const rows = dbRows.some((r) => r.isBenefit) ? dbRows : loadStaticFallback();
+    cache = { at: Date.now(), rows };
   }
   return cache.rows;
 }
