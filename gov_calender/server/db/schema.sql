@@ -47,3 +47,30 @@ CREATE TABLE IF NOT EXISTS crawl_meta (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- ===== 사용자 / 세션 / 관심 (PROJECT_SPEC.md §9) =====
+CREATE TABLE IF NOT EXISTS users (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  email       TEXT NOT NULL UNIQUE,
+  pw_hash     TEXT NOT NULL,           -- scrypt hex
+  pw_salt     TEXT NOT NULL,           -- hex
+  profile     TEXT NOT NULL DEFAULT '{}',  -- JSON (생년월일/거주지/소득/세대·직업 태그)
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token       TEXT PRIMARY KEY,        -- random hex
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS favorites (
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  announcement_id TEXT NOT NULL,
+  notify          INTEGER NOT NULL DEFAULT 0,   -- 1 = 알람 신청함 (실제 발송은 v2)
+  notified_at     TEXT,                          -- 마지막 알람 발송 시각 (v2)
+  created_at      TEXT NOT NULL,
+  PRIMARY KEY (user_id, announcement_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fav_user ON favorites(user_id);

@@ -1,6 +1,6 @@
 // 카테고리 / 상태 / 맞춤 필터 바 (PROJECT_SPEC.md §4.3)
 import { SlidersHorizontal, UserCheck } from 'lucide-react';
-import { useStore, CATEGORY_LABELS } from '../data/store.jsx';
+import { useStore, CATEGORY_LABELS, CATEGORY_THEME } from '../data/store.jsx';
 
 const STATUS_OPTIONS = [
   ['all', '전체'],
@@ -11,7 +11,14 @@ const STATUS_OPTIONS = [
 
 const CATEGORIES = ['welfare', 'youth', 'housing', 'job', 'childcare', 'business', 'subsidy'];
 
-export default function FilterBar({ onOpenProfile, resultCount }) {
+const SORT_OPTIONS = [
+  ['relevance', '나와 관련도순'],
+  ['deadline', '마감 임박순'],
+  ['recent', '최신 등록순'],
+];
+const SORT_LABELS = Object.fromEntries(SORT_OPTIONS);
+
+export default function FilterBar({ onOpenProfile, resultCount, activeSort }) {
   const { state, dispatch } = useStore();
   const { filters, profile } = state;
 
@@ -21,7 +28,7 @@ export default function FilterBar({ onOpenProfile, resultCount }) {
         <span className="fb-icon"><SlidersHorizontal size={16} /></span>
         {CATEGORIES.map((c) => (
           <button key={c}
-            className={`tag-chip ${filters.categories.includes(c) ? 'active' : ''}`}
+            className={`tag-chip ${filters.categories.includes(c) ? `active theme-${CATEGORY_THEME[c]}` : ''}`}
             onClick={() => dispatch({ type: 'TOGGLE_CATEGORY', category: c })}>
             {CATEGORY_LABELS[c]}
           </button>
@@ -58,7 +65,22 @@ export default function FilterBar({ onOpenProfile, resultCount }) {
           </label>
         )}
 
-        <span className="fb-count">{resultCount}건</span>
+        <label className="fb-sort">
+          정렬
+          <select
+            value={filters.sort}
+            onChange={(e) => dispatch({ type: 'SET_FILTER', patch: { sort: e.target.value } })}>
+            {SORT_OPTIONS.map(([v, l]) => (
+              <option key={v} value={v} disabled={v === 'relevance' && !profile}>
+                {l}{v === 'relevance' && !profile ? ' (내 조건 필요)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <span className="fb-count">
+          {resultCount}건 · {SORT_LABELS[activeSort] || SORT_LABELS.deadline}
+        </span>
       </div>
     </div>
   );

@@ -10,9 +10,10 @@
     "preview": "vite preview",
     "crawl": "node server/crawler/run.js",
     "crawl:full": "node server/crawler/run.js --full --pages=40",
+    "refresh": "node server/crawler/refresh.js",
     "reclassify": "node server/crawler/reclassify.js",
     "export": "node server/export.js",
-    "api": "node server/api.js"
+    "api": "node --env-file-if-exists=.env server/api.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

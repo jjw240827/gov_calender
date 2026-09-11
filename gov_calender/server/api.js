@@ -2,7 +2,11 @@
 //   npm run api            → http://localhost:5178
 // Vite dev 서버에서 /api 프록시로 연결 (vite.config.js 참조)
 import { createServer } from 'node:http';
-import { listAnnouncements, getAnnouncement, getMeta } from './db/index.js';
+import {
+  listAnnouncements, getAnnouncement, getMeta,
+  createUser, verifyUser, createSession, userForToken, deleteSession, updateUserProfile,
+  listFavorites, setFavorite, setFavoriteNotify,
+} from './db/index.js';
 import { searchAnnouncements } from './lib/match.js';
 
 const PORT = process.env.API_PORT || 5178;
@@ -20,11 +24,14 @@ const json = (res, code, body) => {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
   });
   res.end(JSON.stringify(body));
 };
+
+const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim() || null;
+const requireUser = (req) => userForToken(bearer(req));
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -66,6 +73,114 @@ const server = createServer(async (req, res) => {
         benefitOnly: searchParams.get('benefitOnly') !== 'false',
       });
       return json(res, 200, { count: rows.length, announcements: rows });
+    }
+
+    if (pathname === '/api/ai-search' && req.method === 'POST') {
+      const { query } = await readBody(req);
+      if (!query || !query.trim()) return json(res, 400, { error: '검색어를 입력하세요.' });
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return json(res, 501, { error: 'AI 검색 미설정: 서버에 GEMINI_API_KEY 환경변수가 필요합니다.' });
+      }
+
+      const rows = allRows().filter((a) => a.isBenefit);
+      const catalog = rows.map((a) => ({
+        id: a.id, title: a.title, category: a.category,
+        department: a.department, summary: (a.bodyText || '').slice(0, 200),
+      }));
+      const prompt = `아래는 화성시 정부 지원금/혜택 공고 목록입니다. 사용자 질문과 가장 관련 있는 공고의 id를 관련도 높은 순으로 골라 배열로 반환하세요. 관련 있는 공고가 없으면 빈 배열을 반환하세요.\n\n질문: "${query}"\n\n공고 목록(JSON):\n${JSON.stringify(catalog)}`;
+
+      try {
+        const gRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                responseMimeType: 'application/json',
+                responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
+              },
+            }),
+            signal: AbortSignal.timeout(20000),
+          },
+        );
+        if (!gRes.ok) throw new Error(`Gemini HTTP ${gRes.status}`);
+        const gData = await gRes.json();
+        const text = gData.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
+        const ids = JSON.parse(text);
+        const byId = new Map(rows.map((a) => [a.id, a]));
+        const matched = ids.map((id) => byId.get(id)).filter(Boolean);
+        return json(res, 200, { count: matched.length, announcements: matched });
+      } catch (err) {
+        return json(res, 502, { error: `AI 검색 실패: ${err.message}` });
+      }
+    }
+
+    // ===== 인증 =====
+    if (pathname === '/api/auth/register' && req.method === 'POST') {
+      const { email, password, profile } = await readBody(req);
+      try {
+        const user = createUser(email, password, profile || {});
+        const token = createSession(user.id);
+        return json(res, 200, { token, user, favorites: [] });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    if (pathname === '/api/auth/login' && req.method === 'POST') {
+      const { email, password } = await readBody(req);
+      const user = verifyUser(email, password);
+      if (!user) return json(res, 401, { error: '이메일 또는 비밀번호가 올바르지 않습니다.' });
+      const token = createSession(user.id);
+      return json(res, 200, { token, user, favorites: listFavorites(user.id) });
+    }
+
+    if (pathname === '/api/auth/logout' && req.method === 'POST') {
+      deleteSession(bearer(req));
+      return json(res, 200, {});
+    }
+
+    if (pathname === '/api/auth/me' && req.method === 'GET') {
+      const user = requireUser(req);
+      if (!user) return json(res, 401, { error: '로그인이 필요합니다.' });
+      return json(res, 200, { user, favorites: listFavorites(user.id) });
+    }
+
+    if (pathname === '/api/auth/profile' && req.method === 'PUT') {
+      const user = requireUser(req);
+      if (!user) return json(res, 401, { error: '로그인이 필요합니다.' });
+      const { profile } = await readBody(req);
+      return json(res, 200, { profile: updateUserProfile(user.id, profile || {}) });
+    }
+
+    // ===== 관심 / 알람 =====
+    if (pathname === '/api/favorites') {
+      const user = requireUser(req);
+      if (!user) return json(res, 401, { error: '로그인이 필요합니다.' });
+
+      if (req.method === 'GET') return json(res, 200, { favorites: listFavorites(user.id) });
+
+      if (req.method === 'POST') {
+        const { announcementId, on = true } = await readBody(req);
+        if (!announcementId) return json(res, 400, { error: 'announcementId 필요' });
+        return json(res, 200, { favorites: setFavorite(user.id, announcementId, !!on) });
+      }
+    }
+
+    const favNotify = pathname.match(/^\/api\/favorites\/([^/]+)\/notify$/);
+    if (favNotify && req.method === 'PUT') {
+      const user = requireUser(req);
+      if (!user) return json(res, 401, { error: '로그인이 필요합니다.' });
+      const { notify } = await readBody(req);
+      try {
+        return json(res, 200, { favorites: setFavoriteNotify(user.id, decodeURIComponent(favNotify[1]), !!notify) });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
     }
 
     if (pathname === '/api/match' && req.method === 'POST') {

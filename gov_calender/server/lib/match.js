@@ -149,6 +149,7 @@ export function searchAnnouncements(list, opts = {}) {
     today = todayStr(),
     interests = [],
     includeIneligible = true,
+    sort = 'deadline',     // 'relevance' | 'deadline' | 'recent'
   } = opts;
 
   const terms = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -183,15 +184,19 @@ export function searchAnnouncements(list, opts = {}) {
     rows = rows.filter((a) => a.match.eligible !== 'no');
   }
 
-  rows.sort((a, b) => {
-    if (profile) {
-      const d = (b.match?.score ?? 0) - (a.match?.score ?? 0);
-      if (d) return d;
-    }
-    const ae = a.applyEnd || '9999-12-31';
-    const be = b.applyEnd || '9999-12-31';
-    return ae.localeCompare(be);
-  });
+  const byDeadline = (a, b) =>
+    (a.applyEnd || '9999-12-31').localeCompare(b.applyEnd || '9999-12-31');
+  const byRecent = (a, b) =>
+    (b.postedDate || '').localeCompare(a.postedDate || '') || byDeadline(a, b);
+  const byRelevance = (a, b) =>
+    (b.match?.score ?? 0) - (a.match?.score ?? 0) || byDeadline(a, b);
+
+  const effectiveSort = sort === 'relevance' && !profile ? 'deadline' : sort;
+  rows.sort(
+    effectiveSort === 'relevance' ? byRelevance :
+    effectiveSort === 'recent' ? byRecent :
+    byDeadline,
+  );
 
   return rows;
 }

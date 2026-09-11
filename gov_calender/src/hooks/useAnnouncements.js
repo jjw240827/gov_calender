@@ -1,9 +1,11 @@
-// 필터·매칭 적용 + 캘린더 레인 배치 (PROJECT_SPEC.md §4.1, §4.3)
+// 필터·매칭 적용 + 캘린더 바 배치 (PROJECT_SPEC.md §4)
 import { useMemo } from 'react';
 import { searchAnnouncements } from '../../server/lib/match.js';
 import { useStore } from '../data/store.jsx';
 
 const MAX_LANES = 4;
+const CAL_DEFAULT = 4;    // 조건·카테고리 미선택 시 달력에 띄우는 대표 공고 수
+const CAL_FILTERED = 8;   // 카테고리/키워드/맞춤 조건이 걸렸을 때 상한
 
 /** 폼 문자열 프로필 → match.js 숫자 프로필 */
 export function normalizeProfile(p) {
@@ -11,8 +13,8 @@ export function normalizeProfile(p) {
   return {
     birthDate: p.birthDate || null,
     residence: p.residence || null,
-    residenceYears: p.residenceYears === '' ? null : Number(p.residenceYears),
-    incomePct: p.incomePct === '' ? null : Number(p.incomePct),
+    residenceYears: p.residenceYears === '' || p.residenceYears == null ? null : Number(p.residenceYears),
+    incomePct: p.incomePct === '' || p.incomePct == null ? null : Number(p.incomePct),
     household: p.household || [],
     occupation: p.occupation || [],
   };
@@ -25,6 +27,8 @@ export function useAnnouncements() {
   const { announcements, filters, profile, currentMonth } = state;
 
   const profileForMatch = filters.useProfile ? normalizeProfile(profile) : null;
+  const effectiveSort =
+    filters.sort === 'relevance' && !profileForMatch ? 'deadline' : filters.sort || 'deadline';
 
   // 리스트용: 전체 필터 반영
   const list = useMemo(
@@ -37,29 +41,45 @@ export function useAnnouncements() {
         profile: profileForMatch,
         interests: filters.categories,
         includeIneligible: filters.includeIneligible,
+        sort: effectiveSort,
       }),
-    [announcements, filters, profileForMatch],
+    [announcements, filters, profileForMatch, effectiveSort],
   );
 
-  // 캘린더용: 리스트 결과 중 현재 월과 겹치는 것만 + 레인 배치
-  const { weeksMeta, monthEvents, overflow } = useMemo(() => {
-    const mk = monthKey(currentMonth);
-    const inMonth = searchAnnouncements(list, { month: mk, benefitOnly: false, keyword: '' });
+  // 카테고리·키워드·맞춤조건 중 하나라도 걸리면 "필터 모드"
+  const hasFilter =
+    filters.categories.length > 0 || filters.keyword.trim() !== '' || !!profileForMatch;
 
-    // 신청기간 있는 것 우선, 시작일 순
-    const withRange = inMonth
-      .filter((a) => a.applyStart || a.applyEnd)
+  // 캘린더용: (필터 없으면) 최신 게재 4건 / (필터 있으면) 상위 8건을 연속 바로 배치
+  const { monthEvents, overflow, calMode, calShown } = useMemo(() => {
+    const mk = monthKey(currentMonth);
+    const mStart = `${mk}-01`;
+    const mEnd = `${mk}-31`;
+
+    const inMonth = list.filter((a) => {
+      const s = a.applyStart || a.postedDate;
+      if (!s) return false;
+      const e = a.applyEnd || s;
+      return !(e < mStart || s > mEnd);
+    });
+
+    const pool = hasFilter
+      ? inMonth.slice(0, CAL_FILTERED)
+      : [...inMonth]
+          .sort((a, b) => (b.postedDate || '').localeCompare(a.postedDate || ''))
+          .slice(0, CAL_DEFAULT);
+
+    const withRange = pool
       .map((a) => ({
         ...a,
-        _start: a.applyStart || a.postedDate || `${mk}-01`,
-        _end: a.applyEnd || a.applyStart || a.postedDate || `${mk}-28`,
+        _start: a.applyStart || a.postedDate || mStart,
+        _end: a.applyEnd || a.applyStart || a.postedDate || mEnd,
       }))
       .sort((a, b) => a._start.localeCompare(b._start) || b._end.localeCompare(a._end));
 
     const laneEnds = [];
     const placed = [];
     const overflowItems = [];
-
     for (const ev of withRange) {
       let lane = laneEnds.findIndex((end) => end < ev._start);
       if (lane === -1) {
@@ -76,8 +96,13 @@ export function useAnnouncements() {
       placed.push({ ...ev, lane });
     }
 
-    return { weeksMeta: null, monthEvents: placed, overflow: overflowItems };
-  }, [list, currentMonth]);
+    return {
+      monthEvents: placed,
+      overflow: overflowItems,
+      calMode: hasFilter ? 'filtered' : 'recent',
+      calShown: placed.length,
+    };
+  }, [list, currentMonth, hasFilter]);
 
   return {
     status: state.status,
@@ -86,7 +111,9 @@ export function useAnnouncements() {
     list,
     monthEvents,
     overflow,
-    weeksMeta,
+    calMode,
+    calShown,
     laneCount: MAX_LANES,
+    sort: effectiveSort,
   };
 }

@@ -1,16 +1,19 @@
 import { useMemo, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, Heart, Search, MapPin, DollarSign, Wallet,
-  GraduationCap, Home, Info, User, Calendar as CalendarIcon, Bell, Sparkles,
-  List as ListIcon, LayoutGrid, CheckCircle2, HelpCircle, XCircle,
+  GraduationCap, Home, Info, User, Calendar as CalendarIcon, Bell, BellRing, Sparkles,
+  List as ListIcon, LayoutGrid, CheckCircle2, HelpCircle, XCircle, LogOut,
 } from 'lucide-react';
 import './App.css';
 import { useStore, CATEGORY_LABELS, CATEGORY_THEME } from './data/store.jsx';
 import { useAnnouncements, normalizeProfile } from './hooks/useAnnouncements.js';
 import { matchAnnouncement, applyStatus } from '../server/lib/match.js';
+import { logout, toggleFavorite, setNotify } from './data/auth.js';
+import { aiSearch } from './data/api.js';
 import FilterBar from './components/FilterBar.jsx';
 import AnnouncementList from './components/AnnouncementList.jsx';
 import ProfileModal from './components/ProfileModal.jsx';
+import AuthModal from './components/AuthModal.jsx';
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const formatDate = (d) =>
@@ -19,8 +22,37 @@ const TODAY = formatDate(new Date());
 
 function App() {
   const { state, dispatch } = useStore();
-  const { status, source, lastCrawlAt, list, monthEvents, overflow, laneCount } = useAnnouncements();
+  const { status, source, lastCrawlAt, list, monthEvents, overflow, calMode, calShown, laneCount, sort } =
+    useAnnouncements();
   const [showProfile, setShowProfile] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
+  const [aiQuery, setAiQuery] = useState('');
+  const [aiResults, setAiResults] = useState(null); // null = AI 검색 비활성
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+
+  const runAiSearch = async () => {
+    if (!aiQuery.trim() || aiLoading) return;
+    setAiLoading(true);
+    setAiError('');
+    try {
+      setAiResults(await aiSearch(aiQuery.trim()));
+    } catch (e) {
+      setAiError(e.message);
+      setAiResults(null);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+  const clearAiSearch = () => { setAiResults(null); setAiError(''); setAiQuery(''); };
+
+  const goHome = () => {
+    clearAiSearch();
+    dispatch({ type: 'SELECT', id: null });
+    dispatch({ type: 'SET_VIEW', view: 'calendar' });
+    dispatch({ type: 'SET_FILTER', patch: { keyword: '', categories: [], status: 'all' } });
+    dispatch({ type: 'SET_MONTH', date: new Date() });
+  };
 
   const selected = useMemo(
     () => list.find((a) => a.id === state.selectedId) || state.announcements.find((a) => a.id === state.selectedId),
@@ -28,26 +60,42 @@ function App() {
   );
 
   if (state.view === 'detail' && selected) {
-    return <DetailPage announcement={selected} onBack={() => dispatch({ type: 'SELECT', id: null })} />;
+    return (
+      <>
+        <DetailPage announcement={selected} onBack={() => dispatch({ type: 'SELECT', id: null })}
+          onRequireAuth={() => setShowAuth(true)} />
+        {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      </>
+    );
   }
 
   return (
     <div className="container calendar-page">
       <header className="cal-hero-header">
         <div className="cal-nav-bar">
-          <div className="cal-logo-group">
+          <button className="cal-logo-group" onClick={goHome} aria-label="홈으로 이동">
             <div className="cal-logo-icon"><CalendarIcon size={24} color="#ffffff" /></div>
             <div>
               <div className="service-tag"><Sparkles size={12} /> 화성시 맞춤 혜택</div>
               <h1 className="hero-title">공공 서비스 캘린더</h1>
             </div>
-          </div>
+          </button>
           <div className="user-action-group">
-            <button className="icon-badge-btn" title="알림"><Bell size={20} /><span className="dot-badge" /></button>
             <button className="user-profile-pill" onClick={() => setShowProfile(true)}>
               <User size={18} />
               <span>{state.profile ? '내 조건 수정' : '내 조건 설정'}</span>
             </button>
+            {state.user ? (
+              <button className="user-profile-pill" title="로그아웃"
+                onClick={async () => { await logout(); dispatch({ type: 'AUTH_CLEAR' }); }}>
+                <span className="pill-email">{state.user.email}</span>
+                <LogOut size={16} />
+              </button>
+            ) : (
+              <button className="user-profile-pill accent" onClick={() => setShowAuth(true)}>
+                <User size={18} /><span>로그인</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -78,35 +126,67 @@ function App() {
               </button>
             ))}
           </div>
+
+          <div className="cal-search-box ai-search-box">
+            <Sparkles size={20} className="search-icon" />
+            <input
+              type="text"
+              placeholder="AI 검색: 예) 화성시 사는 신혼부부가 받을 수 있는 지원금 알려줘"
+              value={aiQuery}
+              onChange={(e) => setAiQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && runAiSearch()}
+              autoComplete="off" spellCheck="false"
+            />
+            {aiResults ? (
+              <button className="btn-search-action" onClick={clearAiSearch}>닫기</button>
+            ) : (
+              <button className="btn-search-action" onClick={runAiSearch} disabled={aiLoading || !aiQuery.trim()}>
+                {aiLoading ? '검색 중…' : 'AI 검색'}
+              </button>
+            )}
+          </div>
+          {aiError && <div className="ai-search-error">{aiError}</div>}
         </div>
       </header>
 
-      <FilterBar onOpenProfile={() => setShowProfile(true)} resultCount={list.length} />
+      {aiResults ? (
+        <>
+          <div className="view-toggle">
+            <span className="data-note"><Sparkles size={14} /> AI 검색 결과 {aiResults.length}건</span>
+          </div>
+          <AnnouncementList items={aiResults} />
+        </>
+      ) : (
+        <>
+          <FilterBar onOpenProfile={() => setShowProfile(true)} resultCount={list.length} activeSort={sort} />
 
-      <div className="view-toggle">
-        <button className={state.view === 'calendar' ? 'active' : ''} onClick={() => dispatch({ type: 'SET_VIEW', view: 'calendar' })}>
-          <LayoutGrid size={16} /> 달력
-        </button>
-        <button className={state.view === 'list' ? 'active' : ''} onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>
-          <ListIcon size={16} /> 리스트
-        </button>
-        <span className="data-note">
-          {status === 'loading' ? '불러오는 중…'
-            : `${source === 'api' ? '실시간' : '저장된'} 데이터 · 최근 수집 ${fmtWhen(lastCrawlAt)}`}
-        </span>
-      </div>
+          <div className="view-toggle">
+            <button className={state.view === 'calendar' ? 'active' : ''} onClick={() => dispatch({ type: 'SET_VIEW', view: 'calendar' })}>
+              <LayoutGrid size={16} /> 달력
+            </button>
+            <button className={state.view === 'list' ? 'active' : ''} onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>
+              <ListIcon size={16} /> 리스트
+            </button>
+            <span className="data-note">
+              {status === 'loading' ? '불러오는 중…'
+                : `${source === 'api' ? '실시간' : '저장된'} 데이터 · 최근 수집 ${fmtWhen(lastCrawlAt)}`}
+            </span>
+          </div>
 
-      {state.view === 'calendar'
-        ? <CalendarView monthEvents={monthEvents} overflow={overflow} laneCount={laneCount}
-            month={state.currentMonth} dispatch={dispatch} />
-        : <AnnouncementList items={list} />}
+          {state.view === 'calendar'
+            ? <CalendarView monthEvents={monthEvents} overflow={overflow} laneCount={laneCount}
+                calMode={calMode} calShown={calShown} month={state.currentMonth} dispatch={dispatch} />
+            : <AnnouncementList items={list} />}
+        </>
+      )}
 
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
     </div>
   );
 }
 
-function CalendarView({ monthEvents, overflow, laneCount, month, dispatch }) {
+function CalendarView({ monthEvents, overflow, laneCount, calMode, calShown, month, dispatch }) {
   const weeks = useMemo(() => {
     const year = month.getFullYear();
     const m = month.getMonth();
@@ -133,6 +213,14 @@ function CalendarView({ monthEvents, overflow, laneCount, month, dispatch }) {
 
   const prev = () => dispatch({ type: 'SET_MONTH', date: new Date(month.getFullYear(), month.getMonth() - 1, 1) });
   const next = () => dispatch({ type: 'SET_MONTH', date: new Date(month.getFullYear(), month.getMonth() + 1, 1) });
+
+  // 달력에 실제로 등장하는 카테고리만 범례로
+  const legend = useMemo(() => {
+    const seen = [];
+    for (const e of monthEvents) if (!seen.includes(e.category)) seen.push(e.category);
+    return seen;
+  }, [monthEvents]);
+  const hasIneligible = monthEvents.some((e) => e.match?.eligible === 'no');
 
   return (
     <div className="cal-card">
@@ -161,13 +249,14 @@ function CalendarView({ monthEvents, overflow, laneCount, month, dispatch }) {
                       if (!ev) return <div key={lane} className="bar-spacer" />;
                       const isStart = day.dateStr === ev._start || day.dayOfWeek === 0;
                       const isEnd = day.dateStr === ev._end || day.dayOfWeek === 6;
-                      const eligCls = ev.match ? ` elig-${ev.match.eligible}` : '';
+                      const dimCls = ev.match?.eligible === 'no' ? ' bar-dim' : '';
                       return (
                         <div key={lane}
-                          className={`bar-item theme-${CATEGORY_THEME[ev.category]} ${isStart ? 'is-start' : ''} ${isEnd ? 'is-end' : ''}${eligCls}`}
+                          className={`bar-item theme-${CATEGORY_THEME[ev.category]} ${isStart ? 'is-start' : ''} ${isEnd ? 'is-end' : ''}${dimCls}`}
                           onClick={() => dispatch({ type: 'SELECT', id: ev.id })}
                           title={ev.title}>
                           {isStart && <span className="bar-text">{ev.title}</span>}
+                          <span className="bar-tip">{ev.title} · {ev._start}~{ev._end}</span>
                         </div>
                       );
                     })}
@@ -179,15 +268,22 @@ function CalendarView({ monthEvents, overflow, laneCount, month, dispatch }) {
         </div>
       </div>
 
-      {overflow.length > 0 && (
-        <div className="cal-overflow">
-          이번 달 표시되지 않은 공고 {overflow.length}건 —{' '}
-          <button onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>리스트에서 보기</button>
+      {legend.length > 0 && (
+        <div className="cal-legend">
+          {legend.map((cat) => (
+            <span key={cat}><i className={`theme-${CATEGORY_THEME[cat]}`} />{CATEGORY_LABELS[cat]}</span>
+          ))}
+          {hasIneligible && <span><i className="leg-dim" />조건 미달 (흐리게 표시)</span>}
         </div>
       )}
-      {monthEvents.length === 0 && overflow.length === 0 && (
-        <div className="cal-overflow">이 달에 해당하는 공고가 없습니다.</div>
-      )}
+
+      <div className="cal-overflow">
+        {calShown === 0
+          ? <>이번 달에 표시할 공고가 없습니다. <button onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>리스트</button>에서 전체를 확인하세요.</>
+          : calMode === 'recent'
+            ? <>조건·카테고리 미선택 — 최근 등록된 공고 {calShown}건을 표시 중입니다. 위에서 <strong>카테고리</strong>를 고르거나 <strong>내 조건</strong>을 설정하면 맞춤 공고가 나옵니다.</>
+            : <>선택한 조건에 맞는 공고 {calShown}건을 표시 중입니다{overflow.length > 0 ? `, ${overflow.length}건은 겹쳐서 생략` : ''}. 전체는 <button onClick={() => dispatch({ type: 'SET_VIEW', view: 'list' })}>리스트</button>에서 확인하세요.</>}
+      </div>
     </div>
   );
 }
@@ -198,13 +294,43 @@ const ELIG_ICON = {
   no: <XCircle size={16} className="text-pink" />,
 };
 
-function DetailPage({ announcement: a, onBack }) {
-  const { state } = useStore();
+function DetailPage({ announcement: a, onBack, onRequireAuth }) {
+  const { state, dispatch } = useStore();
   const c = a.criteria || {};
   const profile = state.profile ? normalizeProfile(state.profile) : null;
   const match = profile ? matchAnnouncement(a, profile) : null;
   const st = applyStatus(a);
   const statusLabel = { open: '신청중', upcoming: '접수 예정', closed: '접수 마감', always: '상시 접수' }[st];
+
+  const fav = state.favorites[a.id];
+  const [busy, setBusy] = useState(false);
+
+  const onFav = async () => {
+    if (!state.user) return onRequireAuth();
+    setBusy(true);
+    try {
+      const { favorites } = await toggleFavorite(a.id, !fav);
+      dispatch({ type: 'SET_FAVORITES', favorites });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onNotify = async () => {
+    if (!state.user) return onRequireAuth();
+    if (!fav) { alert('먼저 관심 공고로 추가하세요.'); return; }
+    setBusy(true);
+    try {
+      const { favorites } = await setNotify(a.id, !fav.notify);
+      dispatch({ type: 'SET_FAVORITES', favorites });
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="container">
@@ -222,8 +348,19 @@ function DetailPage({ announcement: a, onBack }) {
 
         <div className="header-bottom">
           <a className="btn-primary" href={a.url} target="_blank" rel="noreferrer">원문 공고 보기 (화성시청)</a>
-          <button className="btn-outline"><Heart size={18} /> 관심</button>
+          <button className={`btn-outline ${fav ? 'on' : ''}`} onClick={onFav} disabled={busy}>
+            <Heart size={18} fill={fav ? 'currentColor' : 'none'} /> {fav ? '관심 등록됨' : '관심'}
+          </button>
+          <button className={`btn-outline ${fav?.notify ? 'on' : ''}`} onClick={onNotify} disabled={busy}
+            title="관심 공고의 접수 시작·마감을 카카오톡으로 알려드립니다 (발송 기능 준비 중)">
+            {fav?.notify ? <BellRing size={18} /> : <Bell size={18} />} {fav?.notify ? '알람 신청됨' : '알람 신청'}
+          </button>
         </div>
+        {fav?.notify && (
+          <p className="notify-hint">
+            ※ 알람 신청이 저장되었습니다. 실제 카카오톡 발송은 다음 단계에서 연동될 예정입니다.
+          </p>
+        )}
       </header>
 
       {match && (

@@ -1,6 +1,6 @@
 // DB 접근 계층 — node:sqlite 기반 (PROJECT_SPEC.md §1)
 import { DatabaseSync } from 'node:sqlite';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,7 @@ function migrate(db) {
   const cols = db.prepare("PRAGMA table_info(announcements)").all().map((c) => c.name);
   const add = [
     ['apply_end_approx', 'INTEGER NOT NULL DEFAULT 0'],
+    ['views', 'INTEGER'],   // 조회수 (hscity 미제공 → NULL. 향후 소스 대비)
   ];
   for (const [name, def] of add) {
     if (!cols.includes(name)) db.exec(`ALTER TABLE announcements ADD COLUMN ${name} ${def}`);
@@ -53,7 +54,7 @@ export function upsertAnnouncement(record, criteria) {
     id, source = 'hscity', title, url, docNo = null, department = null,
     contact = null, category = 'etc', postedDate = null,
     applyStart = null, applyEnd = null, applyEndApprox = false, bodyText = null,
-    attachments = [], isBenefit = false,
+    attachments = [], isBenefit = false, views = null,
   } = record;
 
   const hash = hashContent(title, bodyText);
@@ -65,17 +66,18 @@ export function upsertAnnouncement(record, criteria) {
     INSERT INTO announcements
       (id, source, title, url, doc_no, department, contact, category,
        posted_date, apply_start, apply_end, apply_end_approx, body_text, attachments,
-       is_benefit, content_hash, crawled_at, updated_at)
+       is_benefit, views, content_hash, crawled_at, updated_at)
     VALUES
       (@id, @source, @title, @url, @docNo, @department, @contact, @category,
        @postedDate, @applyStart, @applyEnd, @applyEndApprox, @bodyText, @attachments,
-       @isBenefit, @hash, @ts, @ts)
+       @isBenefit, @views, @hash, @ts, @ts)
     ON CONFLICT(id) DO UPDATE SET
       source=@source, title=@title, url=@url, doc_no=@docNo,
       department=@department, contact=@contact, category=@category,
       posted_date=@postedDate, apply_start=@applyStart, apply_end=@applyEnd,
       apply_end_approx=@applyEndApprox,
       body_text=@bodyText, attachments=@attachments, is_benefit=@isBenefit,
+      views=COALESCE(@views, announcements.views),
       content_hash=@hash, crawled_at=@ts,
       updated_at=CASE WHEN announcements.content_hash <> @hash THEN @ts ELSE announcements.updated_at END
   `).run({
@@ -84,6 +86,7 @@ export function upsertAnnouncement(record, criteria) {
     attachments: JSON.stringify(attachments),
     isBenefit: isBenefit ? 1 : 0,
     applyEndApprox: applyEndApprox ? 1 : 0,
+    views: views ?? null,
     hash, ts,
   });
 
@@ -181,6 +184,7 @@ export function hydrate(row) {
     bodyText: row.body_text,
     attachments: safeJson(row.attachments, []),
     isBenefit: !!row.is_benefit,
+    views: row.views ?? null,
     updatedAt: row.updated_at,
     criteria: {
       ageMin: row.age_min,
@@ -200,4 +204,120 @@ export function hydrate(row) {
 
 function safeJson(s, fallback) {
   try { return JSON.parse(s); } catch { return fallback; }
+}
+
+// ===================== 사용자 / 세션 / 관심 (PROJECT_SPEC.md §9) =====================
+
+const SESSION_DAYS = 30;
+
+function hashPassword(password, salt = randomBytes(16).toString('hex')) {
+  const hash = scryptSync(String(password), salt, 64).toString('hex');
+  return { hash, salt };
+}
+
+function passwordMatches(password, hash, salt) {
+  const test = scryptSync(String(password), salt, 64);
+  const want = Buffer.from(hash, 'hex');
+  return test.length === want.length && timingSafeEqual(test, want);
+}
+
+const publicUser = (row) =>
+  row ? { id: row.id, email: row.email, profile: safeJson(row.profile, {}) } : null;
+
+/** @returns {{id,email,profile}} */
+export function createUser(email, password, profile = {}) {
+  const db = getDb();
+  const clean = String(email).trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) throw new Error('이메일 형식이 올바르지 않습니다.');
+  if (String(password).length < 6) throw new Error('비밀번호는 6자 이상이어야 합니다.');
+  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(clean)) {
+    throw new Error('이미 가입된 이메일입니다.');
+  }
+  const { hash, salt } = hashPassword(password);
+  const info = db.prepare(
+    'INSERT INTO users (email, pw_hash, pw_salt, profile, created_at) VALUES (?,?,?,?,?)'
+  ).run(clean, hash, salt, JSON.stringify(profile || {}), nowIso());
+  return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid));
+}
+
+/** @returns {{id,email,profile}|null} */
+export function verifyUser(email, password) {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).trim().toLowerCase());
+  if (!row || !passwordMatches(password, row.pw_hash, row.pw_salt)) return null;
+  return publicUser(row);
+}
+
+export function getUserById(id) {
+  return publicUser(getDb().prepare('SELECT * FROM users WHERE id = ?').get(id));
+}
+
+export function updateUserProfile(userId, profile) {
+  getDb().prepare('UPDATE users SET profile = ? WHERE id = ?').run(JSON.stringify(profile || {}), userId);
+  return profile || {};
+}
+
+export function createSession(userId) {
+  const token = randomBytes(24).toString('hex');
+  const now = new Date();
+  const exp = new Date(now.getTime() + SESSION_DAYS * 864e5);
+  getDb().prepare(
+    'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)'
+  ).run(token, userId, now.toISOString(), exp.toISOString());
+  return token;
+}
+
+/** @returns {{id,email,profile}|null} */
+export function userForToken(token) {
+  if (!token) return null;
+  const db = getDb();
+  const s = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+  if (!s) return null;
+  if (new Date(s.expires_at) < new Date()) {
+    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    return null;
+  }
+  return getUserById(s.user_id);
+}
+
+export function deleteSession(token) {
+  if (token) getDb().prepare('DELETE FROM sessions WHERE token = ?').run(token);
+}
+
+export function listFavorites(userId) {
+  return getDb().prepare(
+    'SELECT announcement_id, notify, created_at FROM favorites WHERE user_id = ? ORDER BY created_at DESC'
+  ).all(userId).map((r) => ({
+    announcementId: r.announcement_id,
+    notify: !!r.notify,
+    createdAt: r.created_at,
+  }));
+}
+
+/** 관심 추가/삭제. on=true 추가, false 삭제. */
+export function setFavorite(userId, announcementId, on) {
+  const db = getDb();
+  if (on) {
+    db.prepare(`
+      INSERT INTO favorites (user_id, announcement_id, notify, created_at)
+      VALUES (?,?,0,?)
+      ON CONFLICT(user_id, announcement_id) DO NOTHING
+    `).run(userId, announcementId, nowIso());
+  } else {
+    db.prepare('DELETE FROM favorites WHERE user_id = ? AND announcement_id = ?').run(userId, announcementId);
+  }
+  return listFavorites(userId);
+}
+
+/** 알람 신청 여부 토글 (관심 목록에 있을 때만). */
+export function setFavoriteNotify(userId, announcementId, notify) {
+  const db = getDb();
+  const exists = db.prepare(
+    'SELECT 1 FROM favorites WHERE user_id = ? AND announcement_id = ?'
+  ).get(userId, announcementId);
+  if (!exists) throw new Error('먼저 관심 목록에 추가하세요.');
+  db.prepare(
+    'UPDATE favorites SET notify = ? WHERE user_id = ? AND announcement_id = ?'
+  ).run(notify ? 1 : 0, userId, announcementId);
+  return listFavorites(userId);
 }

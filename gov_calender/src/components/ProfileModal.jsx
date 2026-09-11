@@ -2,6 +2,8 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { useStore, emptyProfile } from '../data/store.jsx';
+import { saveProfile } from '../data/auth.js';
+import { normalizeProfile } from '../hooks/useAnnouncements.js';
 
 const RESIDENCE_OPTIONS = [
   ['', '선택 안 함'],
@@ -31,7 +33,9 @@ export default function ProfileModal({ onClose }) {
 
   const save = () => {
     dispatch({ type: 'SET_PROFILE', profile: form });
-    dispatch({ type: 'SET_FILTER', patch: { useProfile: true } });
+    dispatch({ type: 'SET_FILTER', patch: { useProfile: true, sort: 'relevance' } });
+    // 로그인 상태면 계정에도 저장
+    if (state.user) saveProfile(normalizeProfile(form)).catch(() => { /* 무시 */ });
     onClose();
   };
 

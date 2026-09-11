@@ -230,18 +230,95 @@ searchAnnouncements(list, {
 
 ---
 
-## 4. 캘린더 UI 연동  — 상태: ✅
+## 4. 캘린더 UI 연동  — 상태: ✅ (v2 UX 개선 반영)
 
 구현:
-- `src/data/store.jsx` — Context + useReducer (announcements/filters/profile/view/month), localStorage 저장
+- `src/data/store.jsx` — Context + useReducer (announcements/filters/profile/view/month), localStorage 저장. `filters.sort` 추가
 - `src/data/api.js` — API 우선, 3초 타임아웃 시 `announcements.json` 폴백
-- `src/hooks/useAnnouncements.js` — 필터·매칭 적용 + 캘린더 레인(최대 4) 배치, `normalizeProfile`
-- `src/components/FilterBar.jsx` — 카테고리 칩 / 신청상태 세그먼트 / 맞춤추천 토글 / 부적격 숨기기
-- `src/components/ProfileModal.jsx` — 생년월일·거주지·거주기간·소득·세대/직업 태그 입력
+- `src/hooks/useAnnouncements.js` — 필터·매칭 + 캘린더 **일정 마커** 배치, `normalizeProfile`
+- `src/components/FilterBar.jsx` — 카테고리 칩 / 신청상태 세그먼트 / 맞춤추천 토글 / 부적격 숨기기 / **정렬 선택 + 정렬기준 캡션**
+- `src/components/ProfileModal.jsx` — 생년월일·거주지·거주기간·소득·세대/직업 태그 입력. 저장 시 정렬을 `relevance`로 전환
 - `src/components/AnnouncementList.jsx` — 리스트 뷰, eligible 배지 + D-day + 미충족 사유
-- `src/App.jsx` — 전면 재작성: 달력/리스트 토글, 동적 바 렌더, 상세 페이지에 매칭 배너
-- `src/App.css` — 신규 컴포넌트 스타일 추가(기존 테마 색상 재사용), 반응형 보강
+- `src/App.jsx` — 달력/리스트 토글, 상세 페이지 매칭 배너
+- `src/App.css` — 신규 컴포넌트 스타일, 반응형 보강
 - `src/pages/` (react-router 기반 미사용 파일) 삭제
+
+### 4.5 v2 UX 개선 (2026-09-06)
+
+1. **달력 배치 깨짐 수정** — 그리드 셀 `min-width:0`, 바 텍스트 `ellipsis` 클리핑.
+   전체 제목·기간은 네이티브 `title` + 커스텀 `.bar-tip` 호버 툴팁으로 노출.
+2. **정렬 방식 명시** — `match.js`의 `searchAnnouncements({sort})` = `relevance | deadline | recent`.
+   - `relevance` (나와 관련도순): 매칭 score desc — 프로필 있을 때만, 없으면 `deadline`로 자동 대체
+   - `deadline` (마감 임박순): `apply_end` asc (기본값)
+   - `recent` (최신 등록순): `posted_date` desc
+   FilterBar 우측에 `23건 · 나와 관련도순` 캡션.
+
+### 4.6 v3 캘린더 재설계 (2026-09-06)
+
+1. **달력 상시 노출** — 프로필/카테고리 없이도 표시. `hasFilter` = 카테고리·키워드·맞춤조건 중 하나.
+2. **표시 건수 상한** — 조건·카테고리 미선택 시 **최근 게재 4건**(`CAL_DEFAULT`),
+   필터 걸리면 상위 **8건**(`CAL_FILTERED`). "일자별 2건"이 아니라 **달력 전체 N건**.
+   > hscity는 조회수를 전혀 노출하지 않음 → 기본 대표는 `posted_date` 최신순으로 대체.
+   > 향후 소스 대비 `announcements.views` (nullable) 컬럼만 미리 추가.
+3. **연속 바 복원** — 신청기간(2~10일 등)을 가로로 이어 렌더 (`is-start`/`is-end`).
+   레인 최대 4, 초과는 하단 캡션에 "N건 생략" 표기.
+4. 카테고리(청년/복지 등) 선택 시 그에 맞는 공고가 달력에 뜬다.
+
+### 4.8 색상 규칙 (2026-09-06)
+
+- 달력 바·리스트 카테고리 칩 색상 = **카테고리별 고유색** (`CATEGORY_THEME[cat] = cat`, `.theme-<cat>`)
+  복지=바이올렛 / 청년=블루 / 주거=로즈 / 일자리=앰버 / 보육·출산=그린 / 소상공인=오렌지 / 지원금·공모=시안 / 기타=슬레이트
+- 조건 **미달**(match.eligible==='no') 공고만 `.bar-dim` (opacity 0.38 + desaturate). 충족/확인필요는 원래 색 유지
+- 달력 하단에 등장 카테고리 **범례** + "조건 미달(흐리게)" 표기
+- 리스트 eligible 배지(`.al-elig.elig-*`)는 별도 색(초록/노랑/빨강) — 카테고리색과 구분
+
+### 4.7 캘린더 하단 캡션 규칙
+
+| 상태 | 문구 |
+|---|---|
+| 표시 0건 | "이번 달에 표시할 공고가 없습니다. 리스트에서…" |
+| 필터 없음(`recent`) | "조건·카테고리 미선택 — 최근 등록된 공고 N건을 표시 중…" |
+| 필터 있음(`filtered`) | "선택한 조건에 맞는 공고 N건을 표시 중…(, M건 생략)" |
+
+---
+
+## 9. 로그인 / 관심 / 알람  — 상태: ✅ (v1)
+
+### 9.1 DB (`server/db/schema.sql`)
+
+- `users(id, email UNIQUE, pw_hash, pw_salt, profile JSON, created_at)` — 비밀번호는 `scrypt` 해시+솔트
+- `sessions(token PK, user_id, created_at, expires_at)` — 30일 만료. Bearer 토큰
+- `favorites(user_id, announcement_id, notify, notified_at, created_at, PK(user_id,ann_id))`
+  - `notify` = 알람 신청 여부(0/1). `notified_at` = v2 발송용 예약 컬럼
+- `announcements.views` INTEGER nullable — 조회수(hscity 미제공 → NULL)
+
+### 9.2 API (`server/api.js`, 인증 필요 시 `Authorization: Bearer <token>`)
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| POST | `/api/auth/register` `{email,password,profile?}` | 가입 + 로그인. 로컬 프로필 이관 |
+| POST | `/api/auth/login` `{email,password}` | `{token, user, favorites}` |
+| POST | `/api/auth/logout` | 세션 삭제 |
+| GET | `/api/auth/me` | 세션 복원용. `{user, favorites}` |
+| PUT | `/api/auth/profile` `{profile}` | 계정 프로필 갱신 |
+| GET | `/api/favorites` | 관심 목록 |
+| POST | `/api/favorites` `{announcementId, on}` | 관심 추가/삭제 |
+| PUT | `/api/favorites/:id/notify` `{notify}` | 알람 신청 토글(관심 등록 상태에서만) |
+
+### 9.3 프론트
+
+- `src/data/auth.js` — API 클라이언트. 토큰은 `localStorage['gov_cal_token']`
+- `src/data/store.jsx` — `state.user`, `state.favorites{[id]:{notify}}`. `AUTH_SET`/`AUTH_CLEAR`/`SET_FAVORITES`.
+  마운트 시 토큰 있으면 `fetchMe()`로 세션 복원(API 없으면 조용히 비로그인)
+- `src/components/AuthModal.jsx` — 로그인/회원가입 토글. 가입·로그인 시 기존 `내 조건`을 계정으로 이관
+- `src/App.jsx` DetailPage — **관심**(하트) / **알람 신청**(벨) 버튼.
+  비로그인 시 클릭하면 AuthModal. 알람은 관심 등록 상태에서만 토글. 상태는 서버 저장
+- `ProfileModal` — 로그인 상태면 저장 시 `PUT /api/auth/profile`도 호출
+
+### 9.4 v2 예정
+
+- 알람 실제 발송: `favorites.notify=1` + 접수 시작/마감 D-1 → 카카오톡 알림톡 (별도 워커 + 채널 등록)
+- 소셜 로그인, 비밀번호 재설정, 이메일 인증
 
 ### (구) 4.x 계획
 
@@ -312,16 +389,28 @@ gov_calender/
 | 2026-09-05 | 3 | `match.js`(매칭·검색 순수함수), `api.js`(node:http API), `export.js`(정적 JSON) |
 | 2026-09-05 | 4 | 프론트 상태계층(store/hook) + 필터바·프로필모달·리스트 + App.jsx 재작성 + CSS. `vite build` / `oxlint` 통과 |
 | 2026-09-05 | 2+ | 크롤러 안전장치: fetch 4초 타임아웃(+재시도), `npm run crawl` 기본 샘플 8건 모드, `[i/n]` 항목별 진행 로그, `--full`/`--limit`/`crawl:full`/`reclassify` 스크립트. 신청기간 정규식에 `(요일)` 표기 대응 |
+| 2026-09-06 | 4.5 | 달력 UX 개선: 셀 배치 깨짐 수정+호버 툴팁, 정렬 `relevance/deadline/recent`+캡션 |
+| 2026-09-06 | 4.6 | 캘린더 재설계: 상시 노출, 표시 상한(미선택 4건=최신순 / 필터 8건), 연속 바 복원, 카테고리 선택 시 달력 반영. `views` 컬럼 추가(hscity 미제공) |
+| 2026-09-06 | 9 | 로그인/회원가입(scrypt+세션토큰), 관심·알람 DB(users/sessions/favorites), `/api/auth/*`·`/api/favorites`, AuthModal, DetailPage 관심·알람 버튼. 알람은 저장까지만(발송 v2). `vite build`/`oxlint` 통과, 브라우저 E2E 확인 |
 
 ## 7. 실행 방법
 
 ```bash
 npm install                     # cheerio, iconv-lite 포함
-npm run crawl                    # 최근 3페이지 수집 (--pages=N 로 확대)
-npm run export                   # DB → src/data/announcements.json
-npm run api                      # (선택) 조회 API :5178
+npm run refresh                  # 수집 + 프론트 반영 한 번에 (기본 최신 8건)
+npm run refresh -- --limit=40    # 최신 40건
+npm run refresh -- --full --pages=60   # 60페이지(약 600건) 전체 순회
 npm run dev                      # 프론트. API 없으면 announcements.json 자동 폴백
+
+# (분리 실행)
+npm run crawl                    # 수집만 (DB 갱신). 플래그: --limit / --full --pages=N / --seCode=01 / --id=X
+npm run export                   # DB → src/data/announcements.json
+npm run api                      # 조회 API :5178 — 로그인/관심/알람 기능은 이게 떠 있어야 동작
+CRAWL_TIMEOUT=6000 npm run refresh -- --limit=30   # 요청 타임아웃 조정
 ```
+
+> 로그인/관심/알람을 쓰려면 `npm run api` 와 `npm run dev` 를 함께 실행. API 미실행 시 공고 조회는
+> `announcements.json` 폴백으로 계속 동작하고, 로그인 관련 UI만 비활성(에러 대신 안내 문구).
 
 크롤 갱신 주기: 수동 또는 cron(`npm run crawl && npm run export`). 최초 데이터 400건(혜택성 약 23건) 수집 완료.
 

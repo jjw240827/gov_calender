@@ -24,3 +24,16 @@ export async function loadAnnouncements() {
     };
   }
 }
+
+/** 자연어 질의로 관련 공고 찾기 (Gemini API, 서버에 GEMINI_API_KEY 필요) */
+export async function aiSearch(query) {
+  const res = await fetch(`${API_BASE}/ai-search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(25000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `AI 검색 실패 (${res.status})`);
+  return data.announcements || [];
+}
