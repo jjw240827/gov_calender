@@ -63,5 +63,3 @@ export const fetchMe = () => req('/auth/me');
 export const saveProfile = (profile) => req('/auth/profile', { method: 'PUT', body: { profile } });
 export const toggleFavorite = (announcementId, on) =>
   req('/favorites', { method: 'POST', body: { announcementId, on } });
-export const setNotify = (announcementId, notify) =>
-  req(`/favorites/${encodeURIComponent(announcementId)}/notify`, { method: 'PUT', body: { notify } });
