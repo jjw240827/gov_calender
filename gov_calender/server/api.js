@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   listAnnouncements, getAnnouncement, getMeta,
   createUser, verifyUser, createSession, userForToken, deleteSession, updateUserProfile,
-  listFavorites, setFavorite, setFavoriteNotify,
+  listFavorites, setFavorite,
 } from './db/index.js';
 import { searchAnnouncements } from './lib/match.js';
 
@@ -212,18 +212,6 @@ const server = createServer(async (req, res) => {
         const { announcementId, on = true } = await readBody(req);
         if (!announcementId) return json(res, 400, { error: 'announcementId 필요' });
         return json(res, 200, { favorites: setFavorite(user.id, announcementId, !!on) });
-      }
-    }
-
-    const favNotify = pathname.match(/^\/api\/favorites\/([^/]+)\/notify$/);
-    if (favNotify && req.method === 'PUT') {
-      const user = requireUser(req);
-      if (!user) return json(res, 401, { error: '로그인이 필요합니다.' });
-      const { notify } = await readBody(req);
-      try {
-        return json(res, 200, { favorites: setFavoriteNotify(user.id, decodeURIComponent(favNotify[1]), !!notify) });
-      } catch (e) {
-        return json(res, 400, { error: e.message });
       }
     }
 

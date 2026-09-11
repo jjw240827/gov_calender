@@ -308,16 +308,3 @@ export function setFavorite(userId, announcementId, on) {
   }
   return listFavorites(userId);
 }
-
-/** 알람 신청 여부 토글 (관심 목록에 있을 때만). */
-export function setFavoriteNotify(userId, announcementId, notify) {
-  const db = getDb();
-  const exists = db.prepare(
-    'SELECT 1 FROM favorites WHERE user_id = ? AND announcement_id = ?'
-  ).get(userId, announcementId);
-  if (!exists) throw new Error('먼저 관심 목록에 추가하세요.');
-  db.prepare(
-    'UPDATE favorites SET notify = ? WHERE user_id = ? AND announcement_id = ?'
-  ).run(notify ? 1 : 0, userId, announcementId);
-  return listFavorites(userId);
-}

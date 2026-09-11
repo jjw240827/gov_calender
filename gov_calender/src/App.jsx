@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
 import {
   ChevronLeft, ChevronRight, Heart, Search, MapPin, DollarSign, Wallet,
-  GraduationCap, Home, Info, User, Calendar as CalendarIcon, Bell, BellRing, Sparkles,
+  GraduationCap, Home, Info, User, Calendar as CalendarIcon, Sparkles,
   List as ListIcon, LayoutGrid, CheckCircle2, HelpCircle, XCircle, LogOut,
 } from 'lucide-react';
 import './App.css';
 import { useStore, CATEGORY_LABELS, CATEGORY_THEME } from './data/store.jsx';
 import { useAnnouncements, normalizeProfile } from './hooks/useAnnouncements.js';
 import { matchAnnouncement, applyStatus } from '../server/lib/match.js';
-import { logout, toggleFavorite, setNotify } from './data/auth.js';
+import { logout, toggleFavorite } from './data/auth.js';
 import { aiSearch } from './data/api.js';
 import FilterBar from './components/FilterBar.jsx';
 import AnnouncementList from './components/AnnouncementList.jsx';
@@ -318,20 +318,6 @@ function DetailPage({ announcement: a, onBack, onRequireAuth }) {
     }
   };
 
-  const onNotify = async () => {
-    if (!state.user) return onRequireAuth();
-    if (!fav) { alert('먼저 관심 공고로 추가하세요.'); return; }
-    setBusy(true);
-    try {
-      const { favorites } = await setNotify(a.id, !fav.notify);
-      dispatch({ type: 'SET_FAVORITES', favorites });
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="container">
       <header className="header">
@@ -351,16 +337,7 @@ function DetailPage({ announcement: a, onBack, onRequireAuth }) {
           <button className={`btn-outline ${fav ? 'on' : ''}`} onClick={onFav} disabled={busy}>
             <Heart size={18} fill={fav ? 'currentColor' : 'none'} /> {fav ? '관심 등록됨' : '관심'}
           </button>
-          <button className={`btn-outline ${fav?.notify ? 'on' : ''}`} onClick={onNotify} disabled={busy}
-            title="관심 공고의 접수 시작·마감을 카카오톡으로 알려드립니다 (발송 기능 준비 중)">
-            {fav?.notify ? <BellRing size={18} /> : <Bell size={18} />} {fav?.notify ? '알람 신청됨' : '알람 신청'}
-          </button>
         </div>
-        {fav?.notify && (
-          <p className="notify-hint">
-            ※ 알람 신청이 저장되었습니다. 실제 카카오톡 발송은 다음 단계에서 연동될 예정입니다.
-          </p>
-        )}
       </header>
 
       {match && (
