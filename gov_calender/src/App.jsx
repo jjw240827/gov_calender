@@ -26,10 +26,21 @@ function App() {
     useAnnouncements();
   const [showProfile, setShowProfile] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(false);
   const [aiQuery, setAiQuery] = useState('');
   const [aiResults, setAiResults] = useState(null); // null = AI 검색 비활성
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+
+  const favoriteItems = useMemo(() => {
+    const ids = Object.keys(state.favorites);
+    if (!ids.length) return [];
+    const profile = state.profile ? normalizeProfile(state.profile) : null;
+    return state.announcements
+      .filter((a) => state.favorites[a.id])
+      .map((a) => (profile ? { ...a, match: matchAnnouncement(a, profile) } : a))
+      .sort((a, b) => (a.applyEnd || '9999-99-99').localeCompare(b.applyEnd || '9999-99-99'));
+  }, [state.announcements, state.favorites, state.profile]);
 
   const runAiSearch = async () => {
     if (!aiQuery.trim() || aiLoading) return;
@@ -48,10 +59,16 @@ function App() {
 
   const goHome = () => {
     clearAiSearch();
+    setShowFavorites(false);
     dispatch({ type: 'SELECT', id: null });
     dispatch({ type: 'SET_VIEW', view: 'calendar' });
     dispatch({ type: 'SET_FILTER', patch: { keyword: '', categories: [], status: 'all' } });
     dispatch({ type: 'SET_MONTH', date: new Date() });
+  };
+
+  const openFavorites = () => {
+    clearAiSearch();
+    setShowFavorites(true);
   };
 
   const selected = useMemo(
@@ -85,9 +102,15 @@ function App() {
               <User size={18} />
               <span>{state.profile ? '내 조건 수정' : '내 조건 설정'}</span>
             </button>
+            {state.user && (
+              <button className={`user-profile-pill ${showFavorites ? 'accent' : ''}`} onClick={openFavorites}>
+                <Heart size={18} />
+                <span>내 관심항목{Object.keys(state.favorites).length > 0 ? ` (${Object.keys(state.favorites).length})` : ''}</span>
+              </button>
+            )}
             {state.user ? (
               <button className="user-profile-pill" title="로그아웃"
-                onClick={async () => { await logout(); dispatch({ type: 'AUTH_CLEAR' }); }}>
+                onClick={async () => { await logout(); dispatch({ type: 'AUTH_CLEAR' }); setShowFavorites(false); }}>
                 <span className="pill-email">{state.user.email}</span>
                 <LogOut size={16} />
               </button>
@@ -149,7 +172,19 @@ function App() {
         </div>
       </header>
 
-      {aiResults ? (
+      {showFavorites ? (
+        <>
+          <div className="view-toggle">
+            <span className="data-note"><Heart size={14} /> 내 관심항목 {favoriteItems.length}건</span>
+            <button onClick={goHome}>전체 공고로 돌아가기</button>
+          </div>
+          {favoriteItems.length === 0 ? (
+            <div className="al-empty">아직 관심 등록한 공고가 없습니다. 공고 상세에서 <strong>관심</strong> 버튼을 눌러보세요.</div>
+          ) : (
+            <AnnouncementList items={favoriteItems} />
+          )}
+        </>
+      ) : aiResults ? (
         <>
           <div className="view-toggle">
             <span className="data-note"><Sparkles size={14} /> AI 검색 결과 {aiResults.length}건</span>
