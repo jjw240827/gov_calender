@@ -27,6 +27,7 @@ function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [showAuth, setShowAuth] = useState(false);
   const [showFavorites, setShowFavorites] = useState(false);
+  const [searchMode, setSearchMode] = useState('normal'); // normal | ai
   const [aiQuery, setAiQuery] = useState('');
   const [aiResults, setAiResults] = useState(null); // null = AI 검색 비활성
   const [aiLoading, setAiLoading] = useState(false);
@@ -57,8 +58,15 @@ function App() {
   };
   const clearAiSearch = () => { setAiResults(null); setAiError(''); setAiQuery(''); };
 
+  const selectSearchMode = (mode) => {
+    if (mode === searchMode) return;
+    if (mode === 'normal') clearAiSearch();
+    setSearchMode(mode);
+  };
+
   const goHome = () => {
     clearAiSearch();
+    setSearchMode('normal');
     setShowFavorites(false);
     dispatch({ type: 'SELECT', id: null });
     dispatch({ type: 'SET_VIEW', view: 'calendar' });
@@ -123,52 +131,54 @@ function App() {
         </div>
 
         <div className="cal-search-container">
-          <div className="cal-search-box">
-            <Search size={20} className="search-icon" />
-            <input
-              type="text"
-              placeholder="지원금 명칭 · 담당부서 · 키워드를 입력하세요 (예: 청년 이사비)"
-              value={state.filters.keyword}
-              onChange={(e) => dispatch({ type: 'SET_FILTER', patch: { keyword: e.target.value } })}
-              autoComplete="off" spellCheck="false"
-            />
-            {state.filters.keyword && (
-              <button className="btn-search-action" onClick={() => dispatch({ type: 'SET_FILTER', patch: { keyword: '' } })}>
-                초기화
+          <div className="search-mode-row">
+            <div className="search-mode-toggle">
+              <button className={searchMode === 'normal' ? 'active' : ''} onClick={() => selectSearchMode('normal')}>
+                <Search size={15} /> 일반검색
               </button>
-            )}
-          </div>
-
-          <div className="quick-tags">
-            <span className="tag-label">빠른 검색 :</span>
-            {['청년', '이사비', '임산부', '소상공인', '장학'].map((kw) => (
-              <button key={kw}
-                className={`tag-chip ${state.filters.keyword === kw ? 'active' : ''}`}
-                onClick={() => dispatch({ type: 'SET_FILTER', patch: { keyword: state.filters.keyword === kw ? '' : kw } })}>
-                #{kw}
+              <button className={`mode-ai ${searchMode === 'ai' ? 'active' : ''}`} onClick={() => selectSearchMode('ai')}>
+                <Sparkles size={15} /> AI검색
               </button>
-            ))}
-          </div>
+            </div>
 
-          <div className="cal-search-box ai-search-box">
-            <Sparkles size={20} className="search-icon" />
-            <input
-              type="text"
-              placeholder="AI 검색: 예) 화성시 사는 신혼부부가 받을 수 있는 지원금 알려줘"
-              value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && runAiSearch()}
-              autoComplete="off" spellCheck="false"
-            />
-            {aiResults ? (
-              <button className="btn-search-action" onClick={clearAiSearch}>닫기</button>
+            {searchMode === 'ai' ? (
+              <div className="cal-search-box ai-search-box">
+                <Sparkles size={20} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="AI 검색: 예) 화성시 사는 신혼부부가 받을 수 있는 지원금 알려줘"
+                  value={aiQuery}
+                  onChange={(e) => setAiQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && runAiSearch()}
+                  autoComplete="off" spellCheck="false"
+                />
+                {aiResults ? (
+                  <button className="btn-search-action" onClick={clearAiSearch}>닫기</button>
+                ) : (
+                  <button className="btn-search-action" onClick={runAiSearch} disabled={aiLoading || !aiQuery.trim()}>
+                    {aiLoading ? '검색 중…' : 'AI 검색'}
+                  </button>
+                )}
+              </div>
             ) : (
-              <button className="btn-search-action" onClick={runAiSearch} disabled={aiLoading || !aiQuery.trim()}>
-                {aiLoading ? '검색 중…' : 'AI 검색'}
-              </button>
+              <div className="cal-search-box">
+                <Search size={20} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="지원금 명칭 · 담당부서 · 키워드를 입력하세요 (예: 청년 이사비)"
+                  value={state.filters.keyword}
+                  onChange={(e) => dispatch({ type: 'SET_FILTER', patch: { keyword: e.target.value } })}
+                  autoComplete="off" spellCheck="false"
+                />
+                {state.filters.keyword && (
+                  <button className="btn-search-action" onClick={() => dispatch({ type: 'SET_FILTER', patch: { keyword: '' } })}>
+                    초기화
+                  </button>
+                )}
+              </div>
             )}
           </div>
-          {aiError && <div className="ai-search-error">{aiError}</div>}
+          {searchMode === 'ai' && aiError && <div className="ai-search-error">{aiError}</div>}
         </div>
       </header>
 
